@@ -41,7 +41,6 @@ tmp/
 # Local migration sources and homepage files excluded from the main branch.
 /benchmarks/
 /website/
-/docs/
 
 # Browser QA artifacts.
 .playwright-cli/
