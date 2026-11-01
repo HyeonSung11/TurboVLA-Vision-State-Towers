@@ -9,7 +9,7 @@ Seoul National University of Science and Technology
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-2563eb)](LICENSE)
 
 > 🚀 This project is built on **[TurboVLA](https://github.com/H-EmbodVis/TurboVLA)** (Xie et al., 2026), a lightweight VLA that runs at 32 Hz on an RTX 4090 with < 1 GB VRAM.  
-> The original TurboVLA README is kept at [`docs/README_TurboVLA.md`](docs/README_TurboVLA.md). Everything added here is off by default; with no flag the model is bit-identical to the original.
+> The original TurboVLA README is kept at [`docs/README_TurboVLA.md`](docs/README_TurboVLA.md).
 
 ---
 
@@ -49,26 +49,15 @@ vision-language-action model · lightweight VLA · co-initialization · asymmetr
   <em>Fig. 4. Token reference pattern in one interaction layer. (a) Baseline, (b) proposed.</em>
 </p>
 
-Components (all in [`turbovla/models/turbovla.py`](turbovla/models/turbovla.py) unless noted):
+**Vision tower.** The original interaction module has text self-attention, bidirectional vision–text cross-attention and a text FFN, but no visual self-attention: visual tokens never attend to each other in any of the six layers. The vision tower adds a standard multi-head visual self-attention block with an FFN of width 2048 to every layer. Its output enters through a zero-initialized gate (γ = 0), so at the start of training the model is bit-identical to the baseline and the tower is learned only as far as the data demand it.
 
-1. **Vision tower** (`VisionTower`) – a standard multi-head self-attention + FFN (width 2048) block over the visual tokens, inserted into every interaction layer. Its output is added through a **zero-initialized per-channel gate** (LayerScale, γ = 0), so at step 0 the network equals the baseline.
-2. **Partial co-initialization** ([`turbovla/models/coinit.py`](turbovla/models/coinit.py)) – the `transformer.encoder.layers` of the Grounding DINO checkpoint, which TurboVLA never loaded, are mapped onto the vision tower: `linear1/linear2/norm1/norm2` by name, `self_attn.value_proj → in_proj[V]`, `self_attn.output_proj → out_proj`. The deformable sampling offsets and attention weights have no counterpart and are dropped, so Q/K remain random. `--no_vision_tower_coinit` keeps the same block randomly initialized (the control).
-3. **State tower** (`StateTower`) – the robot state is projected to tokens and, in every layer, attends to the visual and text tokens (**asymmetric**: state reads from the streams, the pretrained streams never read from state). The updated state tokens are passed to the action decoder ([`turbovla/models/action_head.py`](turbovla/models/action_head.py)).
-4. **Learning-rate groups** – parameters that received no pretrained weights (vision-tower Q/K and the gate) use `vision_tower_lr_mult` × base LR (5×, following Cosmos 3); everything else, including the state tower, uses the base LR ([`turbovla/training/trainer.py`](turbovla/training/trainer.py), and `extra_param_lr_groups` in the starVLA runtime for RoboTwin).
+**Partial co-initialization.** The Grounding DINO feature enhancer, from which TurboVLA initializes its interaction module, also contains a visual self-attention block per layer that TurboVLA never loads. Its FFN, normalization layers and value/output projections are copied into the vision tower. The block is deformable attention, so the sampling offsets and attention weights have no counterpart in standard attention and are dropped; the query and key projections therefore remain random. A vision tower of the same shape with fully random initialization serves as the control that separates the effect of the architecture from that of the transferred weights.
 
-All options live in `InteractionConfig` ([`turbovla/models/configuration.py`](turbovla/models/configuration.py)):
+**State tower.** The robot state is projected to tokens and injected at the fusion stage instead of only at the action decoder. In every layer the state tokens attend to the visual and text tokens, while the pretrained visual and text streams never attend to the state (asymmetric attention), so the pretrained representations are not disturbed. The updated state tokens are then passed to the action decoder together with the fused tokens.
 
-| Option | Default | Meaning |
-|---|---|---|
-| `vision_tower` | `False` | add the visual self-attention tower to every layer |
-| `vision_tower_coinit` | `True` | co-initialize it from Grounding DINO (`False` = random control) |
-| `vision_tower_ffn` / `vision_tower_nheads` | `2048` / `8` | tower width (2048 is the only width that copies Grounding DINO's FFN uncut) |
-| `vision_tower_lr_mult` | `5.0` | LR multiplier for the randomly initialized tower parameters |
-| `state_as_modality` | `False` | add the state tower |
-| `state_tower_ffn` | `512` | state tower FFN width |
-| `layer_tap` / `layer_tap_stride` | `False` / `2` | experimental, not used in the paper |
+**Learning rate.** Parameters that received no pretrained weights (the query/key projections of the vision tower and its gate) use five times the base learning rate, following Cosmos 3; everything else, including the state tower, uses the base learning rate. The multiplier and the FFN width were not tuned.
 
-The five configurations of the paper are: **Baseline**, **VT (co-init)**, **VT (random)**, **ST**, **VT (co-init) + ST**.
+The five configurations compared in the paper are **Baseline**, **VT (co-init)**, **VT (random)**, **ST**, and **VT (co-init) + ST**. With both towers off the model is the original TurboVLA.
 
 ---
 
@@ -125,44 +114,3 @@ All runs use two RTX 4090 (24 GB) GPUs. LIBERO: one model on the four suites (sp
 </p>
 
 **Summary.** Partial co-initialization speeds up the early phase (+4.2%p at 8k) but does not change the convergence point. Either tower alone does not move the final success rate. The combination is the best configuration on RoboTwin 2.0 in both seeds and exceeds both baseline seeds (+3.8%p between two-seed means); its task-level gains, however, move with the seed (task-level SD between the two combination seeds is 16.9%p), so no claim is made about particular task types.
-
----
-
-## Setup and usage
-
-See [`setup.md`](setup.md) for environment setup, data preparation, and the exact commands used for every run (LIBERO and RoboTwin training, evaluation, resume).
-
-Quick reference (after `source setup/00_env.sh`):
-
-```bash
-# LIBERO: baseline / vision tower / random control / state tower / combination
-bash setup/13_libero_train.sh
-bash setup/13_libero_train.sh --vision_tower
-bash setup/13_libero_train.sh --vision_tower --no_vision_tower_coinit
-bash setup/13_libero_train.sh --state_as_modality
-bash setup/13_libero_train.sh --vision_tower --state_as_modality
-
-# RoboTwin 2.0: MODE = coinit | random | state | combo  (baseline: setup/05_robotwin_train.sh)
-MODE=combo bash setup/20_robotwin_vision_tower.sh
-MODE=combo bash setup/21_robotwin_eval_ours.sh
-```
-
----
-
-## Repository layout
-
-```
-turbovla/                  model, training, evaluation (modified: models/turbovla.py, action_head.py,
-                           configuration.py, training/trainer.py; new: models/coinit.py)
-third_party/starvla_runtime/   RoboTwin training runtime (modified: TurboVLA adapter, trainer LR groups,
-                           gradient accumulation with DeepSpeed ZeRO-2)
-experiments/               LIBERO / RoboTwin entry points and configs (upstream)
-scripts/                   upstream helper scripts
-setup/                     our shell scripts: assets, data, training, evaluation, resume (numbered in order)
-figs/                      paper figures
-docs/README_TurboVLA.md    original TurboVLA README
-```
-
-## Acknowledgements
-
-This work builds on [TurboVLA](https://github.com/H-EmbodVis/TurboVLA), [Grounding DINO](https://github.com/IDEA-Research/GroundingDINO), [DINOv3](https://github.com/facebookresearch/dinov3), [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO), [RoboTwin 2.0](https://github.com/RoboTwin-Platform/RoboTwin) and the [starVLA](https://github.com/starVLA/starVLA) runtime. The code is released under the Apache 2.0 license of the original TurboVLA repository.
