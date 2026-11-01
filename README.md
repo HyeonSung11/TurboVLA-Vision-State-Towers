@@ -4,8 +4,6 @@
 Hyeon-Sung Choi, Jong-Eun Ha*  
 Seoul National University of Science and Technology
 
-- Manuscript for *Journal of Institute of Control, Robotics and Systems* (J. ICROS), submitted 2026/11
-
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-2563eb)](LICENSE)
 
 > 🚀 This project is built on **[TurboVLA](https://github.com/H-EmbodVis/TurboVLA)** (Xie et al., 2026), a lightweight VLA that runs at 32 Hz on an RTX 4090 with < 1 GB VRAM.  
